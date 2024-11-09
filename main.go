@@ -372,7 +372,6 @@ func (c *DefaultNodePayClient) Connect(ctx context.Context, proxy, token string)
 	}
 
 	userAgent := browser.Chrome()
-	c.logger.Info("using user agent", "ua", userAgent)
 
 	accountInfo, err := c.getSession(client, token, userAgent)
 	if err != nil {
@@ -389,17 +388,17 @@ func (c *DefaultNodePayClient) Connect(ctx context.Context, proxy, token string)
 			UID:       uid,
 			BrowserID: browserId,
 		}
-	} else {
-		c.logger.Info("session ok")
 	}
 
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
+	// Send immediate first ping
 	if err := c.sendPing(client, accountInfo, token, userAgent); err != nil {
 		c.logger.Error("ping error")
 	}
 
+	//start ping loop
 	for {
 		select {
 		case <-ctx.Done():
@@ -465,56 +464,43 @@ func main() {
 
 	bot := NewBot(config, logger)
 	var wg sync.WaitGroup
-
 	done := make(chan struct{})
 
 	go func() {
 		for token, tokenProxies := range proxyDistribution {
-			currentProxyIndex := 0
-			maxProxyIndex := len(tokenProxies)
-
-			wg.Add(1)
-			go func(token string, proxies []string) {
-				defer wg.Done()
-				for {
-					select {
-					case <-ctx.Done():
-						logger.Info("shutting down connection",
-							"tokenPrefix", token[:8]+"...")
-						return
-					default:
-						proxy := proxies[currentProxyIndex]
-						currentProxyIndex = (currentProxyIndex + 1) % maxProxyIndex
-
-						ipInfo, err := bot.proxyCheck.GetProxyIP(proxy)
-						if err != nil {
-							logger.Error("proxy check failed",
-								"error", err,
-								"proxy", proxy)
-							continue
-						}
-
-						logger.Info("using proxy",
-							"tokenPrefix", token[:8]+"...",
-							"proxy", proxy,
-							"ip", ipInfo.IP,
-							"location", fmt.Sprintf("%s, %s, %s", ipInfo.City, ipInfo.Region, ipInfo.Country))
-
-						if err := bot.client.Connect(ctx, proxy, token); err != nil {
-							logger.Error("connection error",
-								"error", err,
-								"tokenPrefix", token[:8]+"...",
-								"proxy", proxy)
-							select {
-							case <-ctx.Done():
-								return
-							case <-time.After(config.RetryInterval):
+			for _, proxy := range tokenProxies {
+				wg.Add(1)
+				go func(token, proxy string) {
+					defer wg.Done()
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						default:
+							_, err := bot.proxyCheck.GetProxyIP(proxy)
+							if err != nil {
+								logger.Error("proxy check failed",
+									"error", err,
+									"proxy", proxy)
 								continue
+							}
+
+							if err := bot.client.Connect(ctx, proxy, token); err != nil {
+								logger.Error("connection error",
+									"error", err,
+									"tokenPrefix", token[:8]+"...",
+									"proxy", proxy)
+								select {
+								case <-ctx.Done():
+									return
+								case <-time.After(config.RetryInterval):
+									continue
+								}
 							}
 						}
 					}
-				}
-			}(token, tokenProxies)
+				}(token, proxy)
+			}
 		}
 		wg.Wait()
 		close(done)
