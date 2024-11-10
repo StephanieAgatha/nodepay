@@ -49,15 +49,27 @@ type AccountInfo struct {
 	Name      string `json:"name"`
 }
 
-type DefaultProxyChecker struct {
-	config     Config
-	clientPool *FastHTTPClientPool
-}
-
 type ProxyDistributor struct {
 	tokens  []string
 	proxies []string
 	logger  *log.Logger
+}
+
+// cache proxy ip
+type CachedIPInfo struct {
+	Info      *IPInfo
+	Timestamp time.Time
+}
+
+type ProxyIPCache struct {
+	cache sync.Map
+	ttl   time.Duration
+}
+
+type DefaultProxyChecker struct {
+	config     Config
+	clientPool *FastHTTPClientPool
+	ipCache    *ProxyIPCache
 }
 
 type NodePayClient interface {
@@ -127,6 +139,7 @@ func NewDefaultProxyChecker(config Config) *DefaultProxyChecker {
 	return &DefaultProxyChecker{
 		config:     config,
 		clientPool: NewFastHTTPClientPool(),
+		ipCache:    NewProxyIPCache(),
 	}
 }
 
@@ -135,6 +148,14 @@ func NewProxyDistributor(tokens, proxies []string, logger *log.Logger) *ProxyDis
 		tokens:  tokens,
 		proxies: proxies,
 		logger:  logger,
+	}
+}
+
+// ip cache
+func NewProxyIPCache() *ProxyIPCache {
+	return &ProxyIPCache{
+		cache: sync.Map{},
+		ttl:   2 * time.Hour,
 	}
 }
 
@@ -203,6 +224,18 @@ func initLogger() *log.Logger {
 }
 
 func (pc *DefaultProxyChecker) GetProxyIP(proxy string) (*IPInfo, error) {
+	// check cache nya
+	if cached, ok := pc.ipCache.cache.Load(proxy); ok {
+		cachedInfo := cached.(*CachedIPInfo)
+		// cek if cache is valid or not (already exp)
+		if time.Since(cachedInfo.Timestamp) < pc.ipCache.ttl {
+			return cachedInfo.Info, nil
+		}
+		// if expired, remove from cache
+		pc.ipCache.cache.Delete(proxy)
+	}
+
+	// if not exist on cache / expired, get new ip
 	var proxyURL string
 	if strings.HasPrefix(proxy, "socks5://") {
 		proxyURL = proxy
@@ -236,6 +269,12 @@ func (pc *DefaultProxyChecker) GetProxyIP(proxy string) (*IPInfo, error) {
 	if err := json.Unmarshal(resp.Body(), &ipInfo); err != nil {
 		return nil, fmt.Errorf("could not unmarshal response body: %v", err)
 	}
+
+	//save cache with timestamp
+	pc.ipCache.cache.Store(proxy, &CachedIPInfo{
+		Info:      &ipInfo,
+		Timestamp: time.Now(),
+	})
 
 	return &ipInfo, nil
 }
@@ -398,7 +437,7 @@ func (c *DefaultNodePayClient) Connect(ctx context.Context, proxy, token string)
 		}
 	}
 
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
 	if err := c.sendPing(client, accountInfo, token, userAgent, proxyIP); err != nil {
@@ -438,7 +477,7 @@ func main() {
 	config := Config{
 		SessionURL:    "http://18.136.143.169/api/auth/session",
 		PingURL:       "http://54.255.192.166/api/network/ping",
-		RetryInterval: 30 * time.Second,
+		RetryInterval: 15 * time.Second,
 		IPCheckURL:    "https://ipinfo.io/json",
 		BaseURL:       "https://nodepay.org",
 	}
