@@ -72,6 +72,7 @@ type DefaultNodePayClient struct {
 	config     Config
 	logger     *log.Logger
 	clientPool *FastHTTPClientPool
+	proxyCheck ProxyChecker //proxy check
 }
 
 type FastHTTPClientPool struct {
@@ -101,6 +102,7 @@ func NewDefaultNodePayClient(config Config, logger *log.Logger) *DefaultNodePayC
 		config:     config,
 		logger:     logger,
 		clientPool: NewFastHTTPClientPool(),
+		proxyCheck: NewDefaultProxyChecker(config), //proxy check
 	}
 }
 
@@ -282,7 +284,7 @@ func (c *DefaultNodePayClient) getSession(client *fasthttp.Client, token string,
 			return nil, fmt.Errorf("invalid data")
 		}
 
-		// Log user info
+		// log user info
 		c.logger.Info("session info",
 			"uid", response.Data.UID[:8]+"...",
 			"name", response.Data.Name)
@@ -293,7 +295,7 @@ func (c *DefaultNodePayClient) getSession(client *fasthttp.Client, token string,
 	return nil, fmt.Errorf("status %d", statusCode)
 }
 
-func (c *DefaultNodePayClient) sendPing(client *fasthttp.Client, accountInfo *AccountInfo, token string, userAgent string) error {
+func (c *DefaultNodePayClient) sendPing(client *fasthttp.Client, accountInfo *AccountInfo, token string, userAgent string, proxyIP string) error {
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
 
@@ -358,7 +360,8 @@ func (c *DefaultNodePayClient) sendPing(client *fasthttp.Client, accountInfo *Ac
 
 	c.logger.Info("ping sent",
 		"uid", uidDisplay,
-		"browser", browserDisplay)
+		"browser", browserDisplay,
+		"ip", proxyIP)
 
 	return nil
 }
@@ -369,6 +372,11 @@ func (c *DefaultNodePayClient) Connect(ctx context.Context, proxy, token string)
 
 	if proxy != "" {
 		client.Dial = fasthttpproxy.FasthttpSocksDialer(proxy)
+	}
+
+	proxyIP := "unknown"
+	if ipInfo, err := c.proxyCheck.GetProxyIP(proxy); err == nil {
+		proxyIP = ipInfo.IP
 	}
 
 	userAgent := browser.Chrome()
@@ -393,18 +401,16 @@ func (c *DefaultNodePayClient) Connect(ctx context.Context, proxy, token string)
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	// Send immediate first ping
-	if err := c.sendPing(client, accountInfo, token, userAgent); err != nil {
+	if err := c.sendPing(client, accountInfo, token, userAgent, proxyIP); err != nil {
 		c.logger.Error("ping error")
 	}
 
-	//start ping loop
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := c.sendPing(client, accountInfo, token, userAgent); err != nil {
+			if err := c.sendPing(client, accountInfo, token, userAgent, proxyIP); err != nil {
 				c.logger.Error("ping error")
 				continue
 			}
