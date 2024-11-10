@@ -437,7 +437,7 @@ func (c *DefaultNodePayClient) Connect(ctx context.Context, proxy, token string)
 		}
 	}
 
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	if err := c.sendPing(client, accountInfo, token, userAgent, proxyIP); err != nil {
@@ -477,7 +477,7 @@ func main() {
 	config := Config{
 		SessionURL:    "http://18.136.143.169/api/auth/session",
 		PingURL:       "http://54.255.192.166/api/network/ping",
-		RetryInterval: 15 * time.Second,
+		RetryInterval: 30 * time.Second,
 		IPCheckURL:    "https://ipinfo.io/json",
 		BaseURL:       "https://nodepay.org",
 	}
