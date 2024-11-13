@@ -476,7 +476,7 @@ func readLines(filename string) ([]string, error) {
 func main() {
 	config := Config{
 		SessionURL:    "http://18.136.143.169/api/auth/session",
-		PingURL:       "http://54.255.192.166/api/network/ping",
+		PingURL:       "https://nw.nodepay.org/api/network/ping",
 		RetryInterval: 30 * time.Second,
 		IPCheckURL:    "https://ipinfo.io/json",
 		BaseURL:       "https://nodepay.org",
